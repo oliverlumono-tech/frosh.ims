@@ -1,8 +1,10 @@
 import os
 import sqlite3
-from flask import Flask, render_template, redirect, request, g
+from functools import wraps
+from flask import Flask, render_template, redirect, request, g, session, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev_secret_key")
 DATABASE = os.path.join(os.path.dirname(__file__), "froshims.db")
 
 def get_db():
@@ -35,11 +37,39 @@ def close_connection(exception):
 
 SPORTS = ['Soccer', 'Basketball', 'Ultimate Frisbee']
 
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get('user'):
+            return redirect(url_for('login'))
+        return view(*args, **kwargs)
+    return wrapped
+
+@app.context_processor
+def inject_user():
+    return {'current_user': session.get('user')}
+
 @app.route('/')
 def index():
     return render_template('index.html', sports=SPORTS)
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        if not username:
+            return render_template('login.html', error='Please enter a username.')
+        session['user'] = username
+        return redirect(url_for('index'))
+    return render_template('login.html', error=None)
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect(url_for('index'))
+
 @app.route('/deregister', methods=['POST'])
+@login_required
 def deregister():
     id = request.form.get('id')
     if id:
@@ -65,8 +95,9 @@ def register():
     conn.commit()
     return redirect("/registrants")
 
-@app.route('/registrants') 
-def registrants(): 
+@app.route('/registrants')
+@login_required
+def registrants():
     conn = get_db()
     cur = conn.execute("SELECT id, name, sport FROM registrants")
     registrants = [dict(row) for row in cur.fetchall()]
